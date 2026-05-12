@@ -1,293 +1,197 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as Y from 'yjs'
-import { WebsocketProvider } from 'y-websocket'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
 
-const styles = {
-  appShell: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    background: '#f1f5f9',
-    color: '#0f172a',
-    fontFamily:
-      'Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
-  },
-  header: {
-    height: 64,
-    borderBottom: '1px solid #e2e8f0',
-    background: '#ffffff',
-    padding: '0 20px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    boxShadow: '0 1px 2px rgba(2, 6, 23, 0.04)',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 650,
-    letterSpacing: '-0.02em',
-  },
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 14,
-  },
-  statusBadge: (connected) => ({
-    fontSize: 12,
-    fontWeight: 600,
-    borderRadius: 999,
-    padding: '6px 10px',
-    background: connected ? '#dcfce7' : '#fef2f2',
-    color: connected ? '#166534' : '#991b1b',
-    border: `1px solid ${connected ? '#86efac' : '#fecaca'}`,
-  }),
-  avatars: { display: 'flex', alignItems: 'center' },
-  avatar: (idx) => ({
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    border: '2px solid #ffffff',
-    marginLeft: idx === 0 ? 0 : -8,
-    display: 'inline-flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    fontSize: 12,
-    fontWeight: 600,
-    color: '#0f172a',
-    background: ['#bfdbfe', '#c7d2fe', '#fecdd3'][idx % 3],
-  }),
-  topPane: {
-    height: '75%',
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 16,
-    padding: 16,
-    minHeight: 0,
-  },
-  panel: {
-    background: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 14,
-    boxShadow: '0 1px 3px rgba(2, 6, 23, 0.05)',
-    minHeight: 0,
-    overflow: 'auto',
-  },
-  panelHeader: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#475569',
-    padding: '12px 14px',
-    borderBottom: '1px solid #f1f5f9',
-    position: 'sticky',
-    top: 0,
-    background: '#fff',
-    zIndex: 1,
-  },
-  editorWrapper: { padding: 18, lineHeight: 1.6 },
-  previewWrapper: { padding: 18, lineHeight: 1.7 },
-  bottomPane: {
-    height: '25%',
-    borderTop: '1px solid #e2e8f0',
-    borderLeft: '1px solid #e2e8f0',
-    borderRight: '1px solid #e2e8f0',
-    borderBottom: '1px solid #e2e8f0',
-    background: '#f8fafc',
-    margin: '0 16px 16px',
-    borderRadius: 14,
-    overflow: 'auto',
-    padding: 16,
-  },
-}
-
-function parseMarkdownLine(line, i) {
-  const safe = line.replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  if (!safe.trim()) return <div key={i} style={{ height: 8 }} />
-
-  if (safe.startsWith('# ')) return <h1 key={i}>{inlineFormat(safe.slice(2))}</h1>
-  if (safe.startsWith('## ')) return <h2 key={i}>{inlineFormat(safe.slice(3))}</h2>
-  if (safe.startsWith('### ')) return <h3 key={i}>{inlineFormat(safe.slice(4))}</h3>
-
-  if (safe.startsWith('* ')) {
-    return (
-      <ul key={i} style={{ paddingLeft: 22, margin: '8px 0' }}>
-        <li>{inlineFormat(safe.slice(2))}</li>
-      </ul>
-    )
-  }
-
-  return <p key={i}>{inlineFormat(safe)}</p>
-}
-
-function inlineFormat(text) {
-  const parts = []
-  const boldSplit = text.split(/(\*\*[^*]+\*\*)/g)
-  boldSplit.forEach((chunk, idx) => {
-    if (/^\*\*[^*]+\*\*$/.test(chunk)) {
-      parts.push(<strong key={`b-${idx}`}>{chunk.slice(2, -2)}</strong>)
-    } else {
-      parts.push(<React.Fragment key={`t-${idx}`}>{chunk}</React.Fragment>)
-    }
-  })
-  return parts
-}
-
-function WidgetPane({ text }) {
-  const trimmed = text.trim()
-  const hasHeader = /(^|\n)#{1,6}\s+/.test(text)
-  const hasAssets = /!\[[^\]]*\]\([^\)]+\)|\[[^\]]+\]\([^\)]+\)/.test(text)
-
-  const words = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0
-  const chars = text.length
-  const readMinutes = Math.max(1, Math.ceil(words / 200))
-
-  if (!trimmed) {
-    return (
-      <div>
-        <h3 style={{ margin: '0 0 8px' }}>Getting Started</h3>
-        <ul style={{ margin: 0, paddingLeft: 20, color: '#334155' }}>
-          <li><code># Heading</code> for section titles</li>
-          <li><code>**bold**</code> for emphasis</li>
-          <li><code>* item</code> for bullet lists</li>
-          <li><code>[text](url)</code> and <code>![alt](img)</code> for references</li>
-        </ul>
-      </div>
-    )
-  }
-
-  if (hasAssets) {
-    return (
-      <div>
-        <h3 style={{ margin: '0 0 8px' }}>Asset &amp; Reference Manager</h3>
-        <p style={{ marginTop: 0, color: '#475569' }}>
-          External links or images detected. Review and organize references before publishing.
-        </p>
-        <div style={{ fontSize: 14, color: '#0f172a' }}>
-          <div>• Link/Image blocks found in current draft.</div>
-          <div>• Consider validating URLs and alt text quality.</div>
-        </div>
-      </div>
-    )
-  }
-
-  if (hasHeader) {
-    const toc = text
-      .split('\n')
-      .filter((line) => /^#{1,6}\s+/.test(line))
-      .map((line) => line.replace(/^#{1,6}\s+/, '').trim())
-
-    return (
-      <div>
-        <h3 style={{ margin: '0 0 8px' }}>Structure Checklist</h3>
-        <p style={{ marginTop: 0, color: '#475569' }}>Live outline of your headings:</p>
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
-          {toc.map((item, idx) => (
-            <li key={`${item}-${idx}`} style={{ marginBottom: 4 }}>
-              ☐ {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      <h3 style={{ margin: '0 0 10px' }}>Document Metrics</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-        <MetricCard label="Words" value={words} />
-        <MetricCard label="Characters" value={chars} />
-        <MetricCard label="Read Time" value={`${readMinutes} min`} />
-      </div>
-    </div>
-  )
-}
-
-function MetricCard({ label, value }) {
-  return (
-    <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 12 }}>
-      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 650 }}>{value}</div>
-    </div>
-  )
+const ACTION_RESPONSES = {
+  'Continue Writing':
+    'Furthermore, optimizing layout workflows requires clean separation of state between editor canvas instances and reactive widget wrappers...',
+  'Summarize Selection':
+    'In summary, this document maps out a clean frontend collaborative architecture using Tiptap and Yjs.',
+  'Improve Grammar':
+    'This section has been refined for grammar, clarity, and readability while preserving the original meaning.',
+  'Change Tone to Professional':
+    'This passage has been revised to deliver a professional, concise, and stakeholder-friendly tone.',
 }
 
 export default function CollaborativeMarkdownWorkspace() {
   const ydoc = useMemo(() => new Y.Doc(), [])
-  const ytext = useMemo(() => ydoc.getText('monodoc'), [ydoc])
+  const editorPaneRef = useRef(null)
+  const streamTimerRef = useRef(null)
 
+  const [status, setStatus] = useState('Offline')
   const [rawText, setRawText] = useState('')
-  const [connectionStatus, setConnectionStatus] = useState('connecting')
-
-  useEffect(() => {
-    const updateText = () => setRawText(ytext.toString())
-    updateText()
-    ytext.observe(updateText)
-    return () => ytext.unobserve(updateText)
-  }, [ytext])
-
-  useEffect(() => {
-    const provider = new WebsocketProvider('wss://demos.yjs.dev/ws', 'collab-markdown-editor-demo', ydoc, {
-      connect: true,
-    })
-
-    const updateStatus = ({ status }) => setConnectionStatus(status)
-    provider.on('status', updateStatus)
-
-    return () => {
-      provider.off('status', updateStatus)
-      provider.destroy()
-    }
-  }, [ydoc])
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [handleTop, setHandleTop] = useState(92)
+  const [aiMenuOpen, setAiMenuOpen] = useState(false)
+  const [aiPos, setAiPos] = useState({ top: 0, left: 0 })
+  const [customPrompt, setCustomPrompt] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
 
   const editor = useEditor({
     extensions: [StarterKit.configure({ history: false }), Collaboration.configure({ document: ydoc })],
+    content: '# AI-assisted Collaborative Workspace
+
+Select text to trigger the AI menu or press Ctrl/Cmd + K.',
     editorProps: {
       attributes: {
         style:
-          'min-height: 100%; outline: none; font-size: 15px; color: #0f172a;',
+          'padding: 22px 18px 24px 62px; min-height: 100%; outline: none; line-height: 1.7; font-size: 15px; color: #0f172a;',
+      },
+      handleDOMEvents: {
+        mousemove: (_, event) => {
+          const root = editorPaneRef.current
+          if (!root) return false
+          const target = event.target
+          if (!(target instanceof HTMLElement)) return false
+          const block = target.closest('p, h1, h2, h3, li, blockquote, pre')
+          if (!block) return false
+          const paneRect = root.getBoundingClientRect()
+          const blockRect = block.getBoundingClientRect()
+          setHandleTop(blockRect.top - paneRect.top + root.scrollTop)
+          return false
+        },
       },
     },
-    content:
-      '# Collaborative Markdown\n\nStart typing with your team in real-time.\n\n* Add bullets\n* Add headings\n* Add **emphasis**',
+    onCreate: ({ editor: ed }) => setRawText(ed.getText()),
+    onUpdate: ({ editor: ed }) => {
+      setRawText(ed.getText())
+      setStatus('Syncing')
+      requestAnimationFrame(() => setStatus('Offline'))
+    },
   })
 
+  const stopGenerating = () => {
+    if (streamTimerRef.current) clearInterval(streamTimerRef.current)
+    streamTimerRef.current = null
+    setIsGenerating(false)
+  }
+
+  const streamIntoEditor = (text) => {
+    if (!editor) return
+    stopGenerating()
+    setIsGenerating(true)
+
+    const words = text.split(' ')
+    let index = 0
+    streamTimerRef.current = setInterval(() => {
+      if (!editor) return
+      if (index >= words.length) {
+        stopGenerating()
+        return
+      }
+      editor.commands.insertContent(`${index === 0 ? '' : ' '}${words[index]}`)
+      index += 1
+    }, 50)
+  }
+
+  const updateAiPosition = () => {
+    if (!editor || !editorPaneRef.current) return
+    const { from, to } = editor.state.selection
+    if (from === to) {
+      setAiMenuOpen(false)
+      return
+    }
+    const start = editor.view.coordsAtPos(from)
+    const end = editor.view.coordsAtPos(to)
+    const paneRect = editorPaneRef.current.getBoundingClientRect()
+    const top = Math.max(10, end.bottom - paneRect.top + editorPaneRef.current.scrollTop + 8)
+    const left = Math.max(16, (start.left + end.right) / 2 - paneRect.left - 140)
+    setAiPos({ top, left })
+    setAiMenuOpen(true)
+  }
+
+  useEffect(() => {
+    if (!editor) return
+    const onSelection = () => updateAiPosition()
+    editor.on('selectionUpdate', onSelection)
+
+    const onKeydown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        const { from, to } = editor.state.selection
+        if (from === to) {
+          const c = editor.view.coordsAtPos(from)
+          const paneRect = editorPaneRef.current?.getBoundingClientRect()
+          if (!paneRect || !editorPaneRef.current) return
+          setAiPos({ top: c.bottom - paneRect.top + editorPaneRef.current.scrollTop + 8, left: c.left - paneRect.left - 80 })
+          setAiMenuOpen((v) => !v)
+        } else {
+          updateAiPosition()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeydown)
+    return () => {
+      editor.off('selectionUpdate', onSelection)
+      window.removeEventListener('keydown', onKeydown)
+    }
+  }, [editor])
+
+  useEffect(() => () => {
+    stopGenerating()
+    ydoc.destroy()
+  }, [ydoc])
+
+  const runAction = (action) => {
+    if (!editor) return
+    const text = ACTION_RESPONSES[action] || `AI Suggestion: ${customPrompt || 'Refined output generated locally.'}`
+    streamIntoEditor(text)
+  }
+
   return (
-    <div style={styles.appShell}>
-      <header style={styles.header}>
-        <div style={styles.title}>Collaborative Markdown Workspace</div>
-        <div style={styles.headerRight}>
-          <span style={styles.statusBadge(connectionStatus === 'connected')}>
-            {connectionStatus === 'connected' ? 'Connected' : 'Offline / Reconnecting'}
-          </span>
-          <div style={styles.avatars}>
-            {['AB', 'JS', 'MK'].map((initials, idx) => (
-              <span key={initials} style={styles.avatar(idx)}>{initials}</span>
-            ))}
-          </div>
+    <div style={{ height: '100vh', background: '#f8fafc', color: '#0f172a', fontFamily: 'Inter, system-ui, sans-serif', display: 'flex', flexDirection: 'column' }}>
+      <header style={{ height: 64, borderBottom: '1px solid #e2e8f0', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px' }}>
+        <div style={{ fontWeight: 650 }}>Collaborative Markdown Workspace</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 12, border: '1px solid #e2e8f0', borderRadius: 999, padding: '5px 10px' }}>{status}</span>
+          <div style={{ display: 'flex' }}>{['AS', 'JR', 'PL'].map((u, i) => <span key={u} style={{ width: 26, height: 26, borderRadius: '50%', marginLeft: i ? -8 : 0, background: ['#bfdbfe', '#ddd6fe', '#fecdd3'][i], border: '2px solid #fff', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700 }}>{u}</span>)}</div>
         </div>
       </header>
 
-      <section style={styles.topPane}>
-        <div style={styles.panel}>
-          <div style={styles.panelHeader}>Editor</div>
-          <div style={styles.editorWrapper}>
+      <section style={{ height: '75%', padding: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, minHeight: 0 }}>
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: 14, background: '#fff', position: 'relative', overflow: 'auto' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #f1f5f9', fontSize: 12, fontWeight: 700, color: '#64748b' }}>EDITOR</div>
+          <div ref={editorPaneRef} style={{ height: 'calc(100% - 38px)', overflow: 'auto', position: 'relative' }}>
+            <button type="button" onClick={() => setMenuOpen((v) => !v)} style={{ position: 'absolute', left: 16, top: handleTop, width: 26, height: 26, borderRadius: 8, border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer', zIndex: 3 }}>⋮⋮</button>
+            {menuOpen && <div style={{ position: 'absolute', top: handleTop + 30, left: 16, width: 180, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 8px 20px rgba(2, 6, 23, 0.12)', padding: 8, zIndex: 4 }}>
+              {['Delete Block', 'Turn Into H1', 'Turn Into Bullet List'].map((i) => <button key={i} onClick={() => { if (i === 'Delete Block') editor?.commands.deleteNode('paragraph'); if (i === 'Turn Into H1') editor?.commands.toggleHeading({ level: 1 }); if (i === 'Turn Into Bullet List') editor?.commands.toggleBulletList(); setMenuOpen(false) }} style={{ width: '100%', border: 0, background: '#fff', padding: 8, textAlign: 'left', borderRadius: 8 }}>{i}</button>)}
+            </div>}
+
+            {aiMenuOpen && (
+              <div style={{ position: 'absolute', top: aiPos.top, left: aiPos.left, width: 280, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)', padding: 10, zIndex: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: '#4f46e5', fontWeight: 600 }}>
+                  <span>✦</span><span>AI Assistant</span>
+                  {isGenerating && <button onClick={stopGenerating} style={{ marginLeft: 'auto', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px', fontSize: 11, background: '#fff' }}>◉ Stop Generating</button>}
+                </div>
+                {Object.keys(ACTION_RESPONSES).map((action) => (
+                  <button key={action} onClick={() => runAction(action)} style={{ width: '100%', textAlign: 'left', border: '1px solid #eef2ff', background: '#f8faff', borderRadius: 8, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
+                    {action}
+                  </button>
+                ))}
+                <input value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} placeholder="Make this a list..." style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 10px', marginTop: 4 }} />
+                <button onClick={() => runAction('custom')} style={{ width: '100%', marginTop: 8, border: 0, background: '#4f46e5', color: '#fff', borderRadius: 8, padding: '8px 10px' }}>Run Custom Prompt</button>
+              </div>
+            )}
+
             <EditorContent editor={editor} />
           </div>
         </div>
 
-        <div style={styles.panel}>
-          <div style={styles.panelHeader}>Live Preview</div>
-          <div style={styles.previewWrapper}>
-            {rawText.split('\n').map((line, idx) => parseMarkdownLine(line, idx))}
-          </div>
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: 14, background: '#fff', overflow: 'auto' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #f1f5f9', fontSize: 12, fontWeight: 700, color: '#64748b' }}>LIVE PREVIEW</div>
+          <div style={{ padding: 18, color: '#334155', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{rawText || 'Start typing...'}</div>
         </div>
       </section>
 
-      <section style={styles.bottomPane}>
-        <WidgetPane text={rawText} />
+      <section style={{ height: '25%', margin: '0 16px 16px', border: '1px solid #e2e8f0', borderRadius: 14, background: '#f8fafc', padding: 16 }}>
+        {!rawText.trim()
+          ? 'Smart Toolbox: Use # for headings, * for lists, and select text to open AI menu.'
+          : /(^|\n)#{1,6}\s+/.test(rawText) || /(^|\n)\*\s+/.test(rawText)
+            ? 'Smart Toolbox: Nice structure. Keep headings concise and list items action-oriented.'
+            : `Smart Toolbox: ${rawText.split(/\s+/).filter(Boolean).length} words · ${rawText.length} characters`}
       </section>
     </div>
   )
